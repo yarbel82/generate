@@ -25,29 +25,29 @@
 </div>
 
 <script>
-    // Стандартное кодирование бинарных данных в чистый Base64
+    // Перевод бинарного буфера в стандартную строку Base64
     function bufferToBase64(buffer) {
         return btoa(String.fromCharCode(...new Uint8Array(buffer)));
     }
 
-    // Декодирование из чистого Base64 обратно в бинарный вид
+    // Перевод строки Base64 обратно в бинарный буфер
     function base64ToBuffer(base64) {
-        let binaryString = atob(base64);
-        let bytes = new Uint8Array(binaryString.length);
+        const binaryString = atob(base64);
+        const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
         }
         return bytes.buffer;
     }
 
-    // Генерация случайной строки для пароля шифрования
+    // Генерация случайного буквенно-цифрового ключа
     function generateRandomPassword() {
         const array = new Uint32Array(4);
         window.crypto.getRandomValues(array);
         return Array.from(array, dec => dec.toString(36)).join('');
     }
 
-    // Шифрование по стандарту AES-GCM (Локально в браузере)
+    // Локальное шифрование AES-GCM-256
     async function encryptData(text, password) {
         const enc = new TextEncoder();
         const salt = window.crypto.getRandomValues(new Uint8Array(16));
@@ -65,7 +65,6 @@
             { name: "AES-GCM", iv: iv }, key, enc.encode(text)
         );
 
-        // Собираем всё в один пакет данных [соль + iv + шифр]
         const payload = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
         payload.set(salt, 0);
         payload.set(iv, salt.length);
@@ -74,7 +73,7 @@
         return bufferToBase64(payload.buffer);
     }
 
-    // Расшифровка (Локально в браузере)
+    // Локальная расшифровка AES-GCM-256
     async function decryptData(base64Payload, password) {
         const dec = new TextDecoder();
         const payload = new Uint8Array(base64ToBuffer(base64Payload));
@@ -84,7 +83,7 @@
         const encrypted = payload.slice(28);
         
         const passwordKey = await window.crypto.subtle.importKey(
-            "raw", dec.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
+            "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
         );
         const key = await window.crypto.subtle.deriveKey(
             { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
@@ -97,7 +96,7 @@
         return dec.decode(decrypted);
     }
 
-    // Функция создания ссылки
+    // Генерация ссылки
     async function generateSecureLink() {
         const text = document.getElementById('secret').value;
         if (!text) return alert('Пожалуйста, введите текст!');
@@ -106,44 +105,39 @@
         
         try {
             const encryptedPayload = await encryptData(text, cryptoPassword);
-            
-            // Кодируем зашифрованную строку так, чтобы спецсимволы не ломались мессенджерами
             const safePayload = encodeURIComponent(encryptedPayload);
             
+            // ИСПРАВЛЕНО: Берем строго первый элемент массива (строку URL до хэша)
             const baseUrl = window.location.href.split('#')[0];
             const fullSecureLink = `${baseUrl}#data=${safePayload}&key=${cryptoPassword}`;
             
             const resultDiv = document.getElementById('result');
             resultDiv.innerHTML = `<strong>Ваша зашифрованная ссылка:</strong><br>
                                    <input type="text" id="link-input" value="${fullSecureLink}" readonly onclick="this.select()">
-                                   <p class="warning">Передайте эту ссылку получателю. Данные не сохраняются ни на одном сервере в мире.</p>`;
+                                   <p class="warning">Передайте эту ссылку получателю. Все данные находятся внутри хэша и защищены.</p>`;
             resultDiv.style.display = 'block';
         } catch (e) {
             alert('Ошибка шифрования: ' + e.message);
         }
     }
 
-    // Проверка входящей ссылки при открытии страницы
+    // Проверка хэша при загрузке страницы
     async function checkIncomingLink() {
         const hash = window.location.hash;
         
         if (hash.startsWith('#data=') && hash.includes('&key=')) {
             try {
-                const cleanHash = hash.substring(1); // убираем #
-                const pairs = cleanHash.split('&');
-                let encryptedData = '';
-                let cryptoKey = '';
+                // ИСПРАВЛЕНО: Безопасный парсинг параметров через регулярные выражения
+                const dataMatch = hash.match(/data=([^&]*)/);
+                const keyMatch = hash.match(/key=([^&]*)/);
 
-                pairs.forEach(pair => {
-                    const [k, v] = pair.split('=');
-                    if (k === 'data') encryptedData = decodeURIComponent(v); // Декодируем обратно спецсимволы
-                    if (k === 'key') cryptoKey = v;
-                });
+                if (dataMatch && keyMatch) {
+                    const encryptedData = decodeURIComponent(dataMatch[1]);
+                    const cryptoKey = keyMatch[1];
 
-                if (encryptedData && cryptoKey) {
                     const card = document.getElementById('app-card');
                     card.innerHTML = `<h2>Получение секретных данных</h2>
-                                      <p style="font-size:14px; color:#555;">Вам прислали зашифрованный секрет. Расшифровка произойдет локально на вашем устройстве.</p>
+                                      <p style="font-size:14px; color:#555;">Вам прислали зашифрованный секрет. Расшифровка произойдет на вашем ПК/смартфоне.</p>
                                       <button id="reveal-btn">Показать секрет</button>
                                       <div id="decrypted-result" class="decrypted-box"></div>`;
                     
@@ -152,12 +146,12 @@
                     };
                 }
             } catch (e) {
-                console.error("Ошибка разбора ссылки:", e);
+                console.error("Ошибка структуры хэша:", e);
             }
         }
     }
 
-    // Функция расшифровки по кнопке
+    // Расшифровка
     async function revealSecret(encryptedData, cryptoKey) {
         try {
             const clearText = await decryptData(encryptedData, cryptoKey);
@@ -165,7 +159,7 @@
             displayBox.innerText = clearText;
             displayBox.style.display = 'block';
         } catch (e) {
-            alert('Ошибка расшифровки. Возможно, ссылка была скопирована не полностью или повреждена при передаче.');
+            alert('Ошибка расшифровки. Проверьте, что ссылка скопирована целиком.');
         }
     }
 
