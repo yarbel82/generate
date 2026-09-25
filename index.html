@@ -25,12 +25,12 @@
 </div>
 
 <script>
-    // Превод бинарного буфера в стандартную строку Base64
+    // Конвертация буфера в Base64
     function bufferToBase64(buffer) {
         return btoa(String.fromCharCode(...new Uint8Array(buffer)));
     }
 
-    // Перевод строки Base64 обратно в бинарный буфер
+    // Конвертация Base64 в буфер
     function base64ToBuffer(base64) {
         const binaryString = atob(base64);
         const bytes = new Uint8Array(binaryString.length);
@@ -40,14 +40,14 @@
         return bytes.buffer;
     }
 
-    // Генерация случайного буквенно-цифрового ключа
+    // Генерация случайного ключа
     function generateRandomPassword() {
         const array = new Uint32Array(4);
         window.crypto.getRandomValues(array);
         return Array.from(array, dec => dec.toString(36)).join('');
     }
 
-    // Локальное шифрование AES-GCM-256
+    // Локальное шифрование AES-GCM
     async function encryptData(text, password) {
         const enc = new TextEncoder();
         const salt = window.crypto.getRandomValues(new Uint8Array(16));
@@ -57,7 +57,7 @@
             "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
         );
         const key = await window.crypto.subtle.deriveKey(
-            { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
+            { name: "PBKDF2", salt: salt, iterations: 50000, hash: "SHA-256" },
             passwordKey, { name: "AES-GCM", length: 256 }, false, ["encrypt"]
         );
         
@@ -73,7 +73,7 @@
         return bufferToBase64(payload.buffer);
     }
 
-    // Локальная расшифровка AES-GCM-256
+    // Локальная расшифровка AES-GCM
     async function decryptData(base64Payload, password) {
         const dec = new TextDecoder();
         const payload = new Uint8Array(base64ToBuffer(base64Payload));
@@ -86,7 +86,7 @@
             "raw", dec.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
         );
         const key = await window.crypto.subtle.deriveKey(
-            { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
+            { name: "PBKDF2", salt: salt, iterations: 50000, hash: "SHA-256" },
             passwordKey, { name: "AES-GCM", length: 256 }, false, ["decrypt"]
         );
         
@@ -105,16 +105,19 @@
         
         try {
             const encryptedPayload = await encryptData(text, cryptoPassword);
-            const safePayload = encodeURIComponent(encryptedPayload);
             
-            // ИСПРАВЛЕНО: Формируем чистый строковый URL без использования ненадежного метода split()
+            // ИСПРАВЛЕНО: Безопасное формирование параметров через URLSearchParams
+            const linkParams = new URLSearchParams();
+            linkParams.set('data', encryptedPayload);
+            linkParams.set('key', cryptoPassword);
+            
             const cleanBaseUrl = window.location.origin + window.location.pathname;
-            const fullSecureLink = `${cleanBaseUrl}#data=${safePayload}&key=${cryptoPassword}`;
+            const fullSecureLink = `${cleanBaseUrl}#${linkParams.toString()}`;
             
             const resultDiv = document.getElementById('result');
             resultDiv.innerHTML = `<strong>Ваша зашифрованная ссылка:</strong><br>
                                    <input type="text" id="link-input" value="${fullSecureLink}" readonly onclick="this.select()">
-                                   <p class="warning">Передайте эту ссылку получателю. Все данные находятся внутри хэша и защищены.</p>`;
+                                   <p class="warning">Передайте эту ссылку получателю. Все данные защищены внутри хэша.</p>`;
             resultDiv.style.display = 'block';
         } catch (e) {
             alert('Ошибка шифрования: ' + e.message);
@@ -125,32 +128,28 @@
     async function checkIncomingLink() {
         const hash = window.location.hash;
         
-        if (hash.startsWith('#data=') && hash.includes('&key=')) {
+        if (hash.includes('data=') && hash.includes('key=')) {
             try {
-                const dataIndex = hash.indexOf('data=');
-                const keyIndex = hash.indexOf('&key=');
+                // ИСПРАВЛЕНО: Чтение параметров силами самого браузера, без регулярных выражений
+                const cleanHashString = hash.substring(1); // Удаляем символ '#'
+                const urlParams = new URLSearchParams(cleanHashString);
+                
+                const encryptedData = urlParams.get('data');
+                const cryptoKey = urlParams.get('key');
 
-                if (dataIndex !== -1 && keyIndex !== -1) {
-                    const rawData = hash.substring(dataIndex + 5, keyIndex);
-                    const rawKey = hash.substring(keyIndex + 5);
-
-                    const encryptedData = decodeURIComponent(rawData);
-                    const cryptoKey = rawKey;
-
-                    if (encryptedData && cryptoKey) {
-                        const card = document.getElementById('app-card');
-                        card.innerHTML = `<h2>Получение секретных данных</h2>
-                                          <p style="font-size:14px; color:#555;">Вам прислали зашифрованный секрет. Расшифровка произойдет на вашем ПК/смартфоне.</p>
-                                          <button id="reveal-btn">Показать секрет</button>
-                                          <div id="decrypted-result" class="decrypted-box"></div>`;
-                        
-                        document.getElementById('reveal-btn').onclick = function() {
-                            revealSecret(encryptedData, cryptoKey);
-                        };
-                    }
+                if (encryptedData && cryptoKey) {
+                    const card = document.getElementById('app-card');
+                    card.innerHTML = `<h2>Получение секретных данных</h2>
+                                      <p style="font-size:14px; color:#555;">Вам прислали зашифрованный секрет. Расшифровка произойдет локально на вашем устройстве.</p>
+                                      <button id="reveal-btn">Показать секрет</button>
+                                      <div id="decrypted-result" class="decrypted-box"></div>`;
+                    
+                    document.getElementById('reveal-btn').onclick = function() {
+                        revealSecret(encryptedData, cryptoKey);
+                    };
                 }
             } catch (e) {
-                console.error("Ошибка структуры хэша:", e);
+                console.error("Ошибка разбора URL-параметров:", e);
             }
         }
     }
@@ -164,7 +163,7 @@
             displayBox.style.display = 'block';
         } catch (e) {
             alert('Ошибка расшифровки. Проверьте, что ссылка скопирована целиком.');
-            console.error(e);
+            console.error("Криптографическая ошибка:", e);
         }
     }
 
