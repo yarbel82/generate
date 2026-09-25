@@ -127,23 +127,28 @@
         
         if (hash.startsWith('#data=') && hash.includes('&key=')) {
             try {
-                // ИСПРАВЛЕНО: Чтение строго первой группы совпадения [1] из регулярного выражения
-                const dataMatch = hash.match(/data=([^&]*)/);
-                const keyMatch = hash.match(/key=([^&]*)/);
+                // Исправлено: Самый надежный разбор строки по индексам символов
+                const dataIndex = hash.indexOf('data=');
+                const keyIndex = hash.indexOf('&key=');
 
-                if (dataMatch && keyMatch && dataMatch[1] && keyMatch[1]) {
-                    const encryptedData = decodeURIComponent(dataMatch[1]);
-                    const cryptoKey = keyMatch[1];
+                if (dataIndex !== -1 && keyIndex !== -1) {
+                    const rawData = hash.substring(dataIndex + 5, keyIndex);
+                    const rawKey = hash.substring(keyIndex + 5);
 
-                    const card = document.getElementById('app-card');
-                    card.innerHTML = `<h2>Получение секретных данных</h2>
-                                      <p style="font-size:14px; color:#555;">Вам прислали зашифрованный секрет. Расшифровка произойдет на вашем ПК/смартфоне.</p>
-                                      <button id="reveal-btn">Показать секрет</button>
-                                      <div id="decrypted-result" class="decrypted-box"></div>`;
-                    
-                    document.getElementById('reveal-btn').onclick = function() {
-                        revealSecret(encryptedData, cryptoKey);
-                    };
+                    const encryptedData = decodeURIComponent(rawData);
+                    const cryptoKey = rawKey;
+
+                    if (encryptedData && cryptoKey) {
+                        const card = document.getElementById('app-card');
+                        card.innerHTML = `<h2>Получение секретных данных</h2>
+                                          <p style="font-size:14px; color:#555;">Вам прислали зашифрованный секрет. Расшифровка произойдет на вашем ПК/смартфоне.</p>
+                                          <button id="reveal-btn">Показать секрет</button>
+                                          <div id="decrypted-result" class="decrypted-box"></div>`;
+                        
+                        document.getElementById('reveal-btn').onclick = function() {
+                            revealSecret(encryptedData, cryptoKey);
+                        };
+                    }
                 }
             } catch (e) {
                 console.error("Ошибка структуры хэша:", e);
