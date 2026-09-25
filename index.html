@@ -1,173 +1,159 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Автономный Обмен Паролями</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f7; padding: 40px; text-align: center; color: #333; }
-        .container { max-width: 500px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-        textarea { width: 100%; height: 120px; padding: 12px; box-sizing: border-box; border-radius: 8px; border: 1px solid #ccc; margin-bottom: 15px; font-size: 14px; resize: vertical; }
-        button { padding: 12px 20px; font-size: 16px; border-radius: 8px; border: none; width: 100%; box-sizing: border-box; background: #0071e3; color: white; font-weight: bold; cursor: pointer; transition: background 0.2s; }
-        button:hover { background: #0077ed; }
-        .result { margin-top: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px; word-break: break-all; display: none; text-align: left; }
-        input[type="text"] { width: 100%; padding: 10px; border: 1px solid #a5d6a7; border-radius: 6px; box-sizing: border-box; background: #ffffff; font-size: 14px; margin-top: 10px; }
-        .warning { font-size: 13px; color: #ef5350; margin-top: 10px; font-style: italic; }
-        .decrypted-box { background: #fff3e0; border: 1px solid #ffe0b2; padding: 15px; border-radius: 8px; margin-top: 15px; font-family: monospace; font-size: 15px; white-space: pre-wrap; word-break: break-all; text-align: left; display: none; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secure Share (Yopass-совместимый)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/openpgp/4.10.9/openpgp.min.js"></script>
+<style>
+  :root{color-scheme: light dark;}
+  body{font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width:640px; margin:40px auto; padding:0 16px; line-height:1.5;}
+  textarea{width:100%; min-height:140px; box-sizing:border-box; padding:10px; font-family:monospace; font-size:14px;}
+  select, button, input[type=checkbox]{font-size:15px;}
+  button{padding:10px 18px; border:0; border-radius:6px; background:#2563eb; color:#fff; cursor:pointer; margin-top:10px;}
+  button:disabled{opacity:.5; cursor:default;}
+  .row{margin:10px 0; display:flex; align-items:center; gap:8px;}
+  .box{border:1px solid #ccc; border-radius:8px; padding:16px; margin-top:16px; word-break:break-all;}
+  .link{font-family:monospace; background:#f3f4f6; padding:8px; border-radius:6px; display:block; margin:8px 0;}
+  .warn{color:#b45309;}
+  .err{color:#b91c1c;}
+  a{color:#2563eb;}
+</style>
 </head>
 <body>
-<div class="container" id="app-card">
-    <h2>Создать зашифрованную ссылку</h2>
-    <textarea id="secret" placeholder="Введите ваш пароль или секретный текст здесь..."></textarea>
-    <button onclick="generateSecureLink()">Сгенерировать ссылку</button>
-    <div id="result" class="result"></div>
+
+<h2>🔒 Secure Share</h2>
+
+<div id="createView">
+  <p>Текст шифруется в вашем браузере. На сервер уходит только зашифрованный блок, ключ остаётся в адресной строке (после <code>#</code>) и никогда не передаётся на сервер.</p>
+  <textarea id="secretText" placeholder="Введите секрет..."></textarea>
+  <div class="row">
+    <label>Срок хранения:
+      <select id="expiration">
+        <option value="3600">1 час</option>
+        <option value="86400" selected>1 день</option>
+        <option value="604800">1 неделя</option>
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="oneTime" checked> Одноразовая ссылка (удалить после первого просмотра)</label>
+  </div>
+  <button id="encryptBtn">Зашифровать и получить ссылку</button>
+  <div id="createResult"></div>
+</div>
+
+<div id="viewView" style="display:none">
+  <div id="viewResult">Расшифровка...</div>
 </div>
 
 <script>
-    // Конвертация буфера в Base64
-    function bufferToBase64(buffer) {
-        return btoa(String.fromCharCode(...new Uint8Array(buffer)));
+const API = "https://api.yopass.se"; // публичный бэкенд Yopass
+
+function randomKey() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function encryptMessage(text, key) {
+  const { data } = await openpgp.encrypt({
+    message: openpgp.message.fromText(text),
+    passwords: [key],
+    armor: true
+  });
+  return data;
+}
+
+async function decryptMessage(armored, key) {
+  const message = await openpgp.message.readArmored(armored);
+  const { data } = await openpgp.decrypt({ message, passwords: [key] });
+  return data;
+}
+
+// ---------- Создание секрета ----------
+document.getElementById("encryptBtn").addEventListener("click", async () => {
+  const text = document.getElementById("secretText").value.trim();
+  const resultEl = document.getElementById("createResult");
+  if (!text) { resultEl.innerHTML = '<p class="err">Введите текст секрета.</p>'; return; }
+
+  const btn = document.getElementById("encryptBtn");
+  btn.disabled = true;
+  btn.textContent = "Шифрование...";
+
+  try {
+    const key = randomKey();
+    const armored = await encryptMessage(text, key);
+    const expiration = parseInt(document.getElementById("expiration").value, 10);
+    const oneTime = document.getElementById("oneTime").checked;
+
+    const res = await fetch(`${API}/secret`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: armored, expiration, one_time: oneTime })
+    });
+    if (!res.ok) throw new Error("Сервер вернул ошибку " + res.status);
+    const json = await res.json();
+    const uuid = json.message;
+
+    const shareUrl = `${location.origin}${location.pathname}#/s/${uuid}/${key}`;
+    resultEl.innerHTML = `
+      <div class="box">
+        <p>Ссылка готова:</p>
+        <code class="link" id="shareLink">${shareUrl}</code>
+        <button id="copyBtn">Скопировать</button>
+        <p class="warn">${oneTime ? "Ссылка одноразовая — она исчезнет сразу после первого открытия." : "Ссылка многоразовая, действует до истечения срока."}</p>
+      </div>`;
+    document.getElementById("copyBtn").addEventListener("click", () => {
+      navigator.clipboard.writeText(shareUrl);
+    });
+  } catch (e) {
+    resultEl.innerHTML = `<p class="err">Ошибка: ${e.message}</p>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Зашифровать и получить ссылку";
+  }
+});
+
+// ---------- Просмотр секрета ----------
+async function renderViewer() {
+  // формат хэша: #/s/<uuid>/<key>
+  const parts = location.hash.replace(/^#\/?/, "").split("/");
+  if (parts[0] !== "s" || !parts[1] || !parts[2]) return;
+
+  document.getElementById("createView").style.display = "none";
+  const viewView = document.getElementById("viewView");
+  viewView.style.display = "block";
+  const [, uuid, key] = parts;
+  const resultEl = document.getElementById("viewResult");
+
+  try {
+    const res = await fetch(`${API}/secret/${uuid}`);
+    if (res.status === 404) {
+      resultEl.innerHTML = '<p class="err">Секрет не найден: срок истёк или он уже был просмотрен ранее.</p>';
+      return;
     }
+    if (!res.ok) throw new Error("Сервер вернул ошибку " + res.status);
+    const json = await res.json();
+    const plaintext = await decryptMessage(json.message, key);
 
-    // Конвертация Base64 в буфер
-    function base64ToBuffer(base64) {
-        const binaryString = atob(base64);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-        return bytes.buffer;
-    }
+    resultEl.innerHTML = `
+      <div class="box">
+        <p>Расшифрованный секрет:</p>
+        <textarea readonly style="min-height:140px">${plaintext.replace(/</g,"&lt;")}</textarea>
+        <button id="copySecret">Скопировать</button>
+        ${json.one_time ? '<p class="warn">Это была одноразовая ссылка — она уже удалена с сервера.</p>' : ""}
+      </div>`;
+    document.getElementById("copySecret").addEventListener("click", () => {
+      navigator.clipboard.writeText(plaintext);
+    });
+  } catch (e) {
+    resultEl.innerHTML = `<p class="err">Не удалось расшифровать: неверный ключ или повреждённые данные (${e.message}).</p>`;
+  }
+}
 
-    // Генерация случайного ключа
-    function generateRandomPassword() {
-        const array = new Uint32Array(4);
-        window.crypto.getRandomValues(array);
-        return Array.from(array, dec => dec.toString(36)).join('');
-    }
-
-    // Локальное шифрование AES-GCM
-    async function encryptData(text, password) {
-        const enc = new TextEncoder();
-        const salt = window.crypto.getRandomValues(new Uint8Array(16));
-        const iv = window.crypto.getRandomValues(new Uint8Array(12));
-        
-        const passwordKey = await window.crypto.subtle.importKey(
-            "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
-        );
-        const key = await window.crypto.subtle.deriveKey(
-            { name: "PBKDF2", salt: salt, iterations: 50000, hash: "SHA-256" },
-            passwordKey, { name: "AES-GCM", length: 256 }, false, ["encrypt"]
-        );
-        
-        const encrypted = await window.crypto.subtle.encrypt(
-            { name: "AES-GCM", iv: iv }, key, enc.encode(text)
-        );
-
-        const payload = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
-        payload.set(salt, 0);
-        payload.set(iv, salt.length);
-        payload.set(new Uint8Array(encrypted), salt.length + iv.length);
-        
-        return bufferToBase64(payload.buffer);
-    }
-
-    // Локальная расшифровка AES-GCM
-    async function decryptData(base64Payload, password) {
-        const dec = new TextDecoder();
-        const payload = new Uint8Array(base64ToBuffer(base64Payload));
-        
-        const salt = payload.slice(0, 16);
-        const iv = payload.slice(16, 28);
-        const encrypted = payload.slice(28);
-        
-        const passwordKey = await window.crypto.subtle.importKey(
-            "raw", dec.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
-        );
-        const key = await window.crypto.subtle.deriveKey(
-            { name: "PBKDF2", salt: salt, iterations: 50000, hash: "SHA-256" },
-            passwordKey, { name: "AES-GCM", length: 256 }, false, ["decrypt"]
-        );
-        
-        const decrypted = await window.crypto.subtle.decrypt(
-            { name: "AES-GCM", iv: iv }, key, encrypted
-        );
-        return dec.decode(decrypted);
-    }
-
-    // Генерация ссылки
-    async function generateSecureLink() {
-        const text = document.getElementById('secret').value;
-        if (!text) return alert('Пожалуйста, введите текст!');
-
-        const cryptoPassword = generateRandomPassword();
-        
-        try {
-            const encryptedPayload = await encryptData(text, cryptoPassword);
-            
-            // ИСПРАВЛЕНО: Безопасное формирование параметров через URLSearchParams
-            const linkParams = new URLSearchParams();
-            linkParams.set('data', encryptedPayload);
-            linkParams.set('key', cryptoPassword);
-            
-            const cleanBaseUrl = window.location.origin + window.location.pathname;
-            const fullSecureLink = `${cleanBaseUrl}#${linkParams.toString()}`;
-            
-            const resultDiv = document.getElementById('result');
-            resultDiv.innerHTML = `<strong>Ваша зашифрованная ссылка:</strong><br>
-                                   <input type="text" id="link-input" value="${fullSecureLink}" readonly onclick="this.select()">
-                                   <p class="warning">Передайте эту ссылку получателю. Все данные защищены внутри хэша.</p>`;
-            resultDiv.style.display = 'block';
-        } catch (e) {
-            alert('Ошибка шифрования: ' + e.message);
-        }
-    }
-
-    // Проверка хэша при загрузке страницы
-    async function checkIncomingLink() {
-        const hash = window.location.hash;
-        
-        if (hash.includes('data=') && hash.includes('key=')) {
-            try {
-                // ИСПРАВЛЕНО: Чтение параметров силами самого браузера, без регулярных выражений
-                const cleanHashString = hash.substring(1); // Удаляем символ '#'
-                const urlParams = new URLSearchParams(cleanHashString);
-                
-                const encryptedData = urlParams.get('data');
-                const cryptoKey = urlParams.get('key');
-
-                if (encryptedData && cryptoKey) {
-                    const card = document.getElementById('app-card');
-                    card.innerHTML = `<h2>Получение секретных данных</h2>
-                                      <p style="font-size:14px; color:#555;">Вам прислали зашифрованный секрет. Расшифровка произойдет локально на вашем устройстве.</p>
-                                      <button id="reveal-btn">Показать секрет</button>
-                                      <div id="decrypted-result" class="decrypted-box"></div>`;
-                    
-                    document.getElementById('reveal-btn').onclick = function() {
-                        revealSecret(encryptedData, cryptoKey);
-                    };
-                }
-            } catch (e) {
-                console.error("Ошибка разбора URL-параметров:", e);
-            }
-        }
-    }
-
-    // Расшифровка
-    async function revealSecret(encryptedData, cryptoKey) {
-        try {
-            const clearText = await decryptData(encryptedData, cryptoKey);
-            const displayBox = document.getElementById('decrypted-result');
-            displayBox.innerText = clearText;
-            displayBox.style.display = 'block';
-        } catch (e) {
-            alert('Ошибка расшифровки. Проверьте, что ссылка скопирована целиком.');
-            console.error("Криптографическая ошибка:", e);
-        }
-    }
-
-    window.onload = checkIncomingLink;
+window.addEventListener("hashchange", () => location.reload());
+if (location.hash) renderViewer();
 </script>
 </body>
 </html>
