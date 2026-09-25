@@ -25,7 +25,7 @@
 </div>
 
 <script>
-    // Перевод бинарного буфера в стандартную строку Base64
+    // Превод бинарного буфера в стандартную строку Base64
     function bufferToBase64(buffer) {
         return btoa(String.fromCharCode(...new Uint8Array(buffer)));
     }
@@ -107,9 +107,9 @@
             const encryptedPayload = await encryptData(text, cryptoPassword);
             const safePayload = encodeURIComponent(encryptedPayload);
             
-            // Исправлено: Берем строго строковую часть адреса до символа решетки
-            const baseUrl = window.location.href.split('#')[0];
-            const fullSecureLink = `${baseUrl}#data=${safePayload}&key=${cryptoPassword}`;
+            // ИСПРАВЛЕНО: Формируем чистый строковый URL без использования ненадежного метода split()
+            const cleanBaseUrl = window.location.origin + window.location.pathname;
+            const fullSecureLink = `${cleanBaseUrl}#data=${safePayload}&key=${cryptoPassword}`;
             
             const resultDiv = document.getElementById('result');
             resultDiv.innerHTML = `<strong>Ваша зашифрованная ссылка:</strong><br>
@@ -127,7 +127,6 @@
         
         if (hash.startsWith('#data=') && hash.includes('&key=')) {
             try {
-                // Исправлено: Самый надежный разбор строки по индексам символов
                 const dataIndex = hash.indexOf('data=');
                 const keyIndex = hash.indexOf('&key=');
 
