@@ -83,7 +83,7 @@
         const encrypted = payload.slice(28);
         
         const passwordKey = await window.crypto.subtle.importKey(
-            "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
+            "raw", dec.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
         );
         const key = await window.crypto.subtle.deriveKey(
             { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
@@ -107,7 +107,7 @@
             const encryptedPayload = await encryptData(text, cryptoPassword);
             const safePayload = encodeURIComponent(encryptedPayload);
             
-            // ИСПРАВЛЕНО: Берем строго первый элемент массива (строку URL до хэша)
+            // Исправлено: Берем строго строковую часть адреса до символа решетки
             const baseUrl = window.location.href.split('#')[0];
             const fullSecureLink = `${baseUrl}#data=${safePayload}&key=${cryptoPassword}`;
             
@@ -127,11 +127,11 @@
         
         if (hash.startsWith('#data=') && hash.includes('&key=')) {
             try {
-                // ИСПРАВЛЕНО: Безопасный парсинг параметров через регулярные выражения
+                // ИСПРАВЛЕНО: Чтение строго первой группы совпадения [1] из регулярного выражения
                 const dataMatch = hash.match(/data=([^&]*)/);
                 const keyMatch = hash.match(/key=([^&]*)/);
 
-                if (dataMatch && keyMatch) {
+                if (dataMatch && keyMatch && dataMatch[1] && keyMatch[1]) {
                     const encryptedData = decodeURIComponent(dataMatch[1]);
                     const cryptoKey = keyMatch[1];
 
@@ -160,6 +160,7 @@
             displayBox.style.display = 'block';
         } catch (e) {
             alert('Ошибка расшифровки. Проверьте, что ссылка скопирована целиком.');
+            console.error(e);
         }
     }
 
