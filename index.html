@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Приватный Обмен Паролями</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; background: #f5f5f7; padding: 40px; text-align: center; }
+        .container { max-width: 500px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 100px; padding: 10px; box-sizing: border-box; border-radius: 6px; border: 1px solid #ccc; margin-bottom: 15px; }
+        select, button { padding: 10px 20px; font-size: 16px; border-radius: 6px; border: 1px solid #ccc; margin-bottom: 15px; width: 100%; }
+        button { background: #0071e3; color: white; border: none; cursor: pointer; font-weight: bold; }
+        button:hover { background: #0077ed; }
+        .result { margin-top: 20px; padding: 15px; background: #e8f5e9; border-radius: 6px; word-break: break-all; display: none; }
+    </style>
+    <!-- Подключаем библиотеку для шифрования на стороне клиента (sjcl или Web Crypto API). Для простоты используем SJCL -->
+    <script src="https://cloudflare.com"></script>
+</head>
+<body>
+<div class="container">
+    <h2>Передать секрет (Yopass Client)</h2>
+    <textarea id="secret" placeholder="Введите ваш пароль или секретный текст здесь..."></textarea>
+    
+    <label for="ttl">Время жизни ссылки:</label>
+    <select id="ttl">
+        <option value="3600">1 час</option>
+        <option value="86400" selected>1 день</option>
+        <option value="604800">1 неделя</option>
+    </select>
+    
+    <button onclick="sendSecret()">Создать зашифрованную ссылку</button>
+    <div id="result" class="result"></div>
+</div>
+
+<script>
+    // Генерируем случайный ключ для шифрования (в браузере)
+    function generateKey() {
+        return Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+    }
+
+    async function sendSecret() {
+        const text = document.getElementById('secret').value;
+        const ttl = document.getElementById('ttl').value;
+        if (!text) return alert('Введите текст!');
+
+        const key = generateKey();
+        // Шифруем текст пароля с помощью сгенерированного ключа локально
+        const encrypted = sjcl.encrypt(key, text);
+
+        // Отправляем ЗАШИФРОВАННЫЙ текст на публичное API Yopass
+        // Сервер Yopass получает только зашифрованный массив кода, он не знает ключ!
+        try {
+            const response = await fetch('https://yopass.se', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: encrypted, ttl: parseInt(ttl) })
+            });
+            const data = await response.json();
+            
+            if (data.id) {
+                // Формируем ссылку на ваш же репозиторий, добавляя ID секрета и КЛЮЧ через решетку #
+                // Хэш после # никогда не отправляется на сервера провайдеров
+                const currentUrl = window.location.href.split('?')[0].split('#')[0];
+                const fullLink = `${currentUrl}?id=${data.id}#key=${key}`;
+                
+                const resultDiv = document.getElementById('result');
+                resultDiv.innerHTML = `<strong>Ваша одноразовая ссылка:</strong><br><br><input type="text" style="width:100%" value="${fullLink}" readonly onclick="this.select()">`;
+                resultDiv.style.display = 'block';
+            }
+        } catch (e) {
+            alert('Ошибка при отправке: ' + e.message);
+        }
+    }
+
+    // Логика расшифровки, если перешли по созданной ссылке
+    async function checkIncoming() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const id = urlParams.get('id');
+        const hash = window.location.hash;
+        
+        if (id && hash.includes('key=')) {
+            const key = hash.split('key=')[1];
+            
+            document.body.innerHTML = `<div class="container"><h2>Получение секрета</h2><p>Внимание! Записка откроется ОДИН раз и сразу уничтожится.</p><button onclick="decryptSecret('${id}', '${key}')">Показать секрет</button><div id="decrypted" class="result"></div></div>`;
+        }
+    }
+
+    async function decryptSecret(id, key) {
+        try {
+            // Скачиваем зашифрованные данные с API Yopass
+            const response = await fetch(`https://yopass.se/${id}`);
+            if (response.status === 404) return alert('Секрет не найден или уже был прочитан (удален).');
+            
+            const data = await response.json();
+            // Расшифровываем локально в браузере ключом из хэша ссылки
+            const decrypted = sjcl.decrypt(key, data.message);
+            
+            const div = document.getElementById('decrypted');
+            div.innerText = decrypted;
+            div.style.display = 'block';
+        } catch (e) {
+            alert('Ошибка расшифровки. Возможно, неверный ключ или данные повреждены.');
+        }
+    }
+
+    // Запускаем проверку при загрузке страницы
+    window.onload = checkIncoming;
+</script>
+</body>
+</html>
